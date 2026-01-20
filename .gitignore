@@ -1,0 +1,8 @@
+*.o
+*.exe
+*.out
+build/
+bin/
+*.log
+*.dat
+*.gif
