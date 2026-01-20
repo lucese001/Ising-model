@@ -307,7 +307,7 @@ int main(int argc, char** argv) {
         computeTime.start();
         metropolis_update(conf_local, red_sites, red_indices,
                           local_L, local_L_halo, gen,
-                          iConf, nThreads, N_local, 0, arr);
+                          iConf, nThreads, N_local, 0);
         computeTime.stop();
 
         // --- Passo 3: Halo exchange completo ---
@@ -358,7 +358,7 @@ int main(int argc, char** argv) {
         computeTime.start();
         metropolis_update(conf_local, black_sites, black_indices,
                           local_L, local_L_halo, gen,
-                          iConf, nThreads, N_local, 1, arr);
+                          iConf, nThreads, N_local, 1);
         computeTime.stop();
 
         // --- Passo 5: Halo exchange finale prima di misurare energia ---

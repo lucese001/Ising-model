@@ -39,8 +39,7 @@ inline void metropolis_update(vector<int8_t>& conf_local,
                               int iConf,
                               size_t nThreads,
                               size_t N_local,
-                              int target_parity,
-                              vector<size_t>& arr )
+                              int target_parity)
 {
     vector<size_t> coord_buf(N_dim);
     vector<size_t> coord_tmp(N_dim);
