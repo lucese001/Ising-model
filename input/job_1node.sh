@@ -3,13 +3,26 @@
 #PBS -l nodes=1:ppn=24
 #PBS -l walltime=02:00:00
 #PBS -j oe
-#PBS -o logs/ising_1node.log
 
 cd $PBS_O_WORKDIR
 
-# Configuration: 1 node, 2 MPI ranks, 12 threads each (24 total cores)
+# Create logs directory if it doesn't exist
+mkdir -p logs
+
+# MPI setup
+export MPI_ROOT=/storage/local/exp_soft/local_sl7/mpi/openmpi-4.0.5
+export PATH=$MPI_ROOT/bin:$PATH
+export LD_LIBRARY_PATH=$MPI_ROOT/lib:$LD_LIBRARY_PATH
+
+# OpenMP configuration: 1 node, 2 MPI ranks, 12 threads each
 export OMP_NUM_THREADS=12
 export OMP_PROC_BIND=close
 export OMP_PLACES=cores
 
-mpirun -n 2 ./ising_old
+echo "Starting job on $(hostname) at $(date)"
+echo "Working directory: $(pwd)"
+echo "OMP_NUM_THREADS: $OMP_NUM_THREADS"
+
+mpirun -n 2 ./ising_old 2>&1 | tee logs/ising_1node.log
+
+echo "Job finished at $(date)"
