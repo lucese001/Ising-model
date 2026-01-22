@@ -1,5 +1,6 @@
 #define PARALLEL_RNG
 // #define DEBUG_PRINT
+// #define DEBUG_HALO
 
 #ifdef USE_PHILOX
 #include "philox_rng.hpp"
@@ -140,7 +141,7 @@ int main(int argc, char** argv) {
     PhiloxRNG gen(seed + 104729);
     print_simulation_info(N_dim, N, nThreads, nConfs, Beta, sizeof(PhiloxRNG), true);
 #else
-    prng_engine gen(seed + world_rank * 104729);
+    prng_engine gen(seed + 104729);  // Same seed for all ranks - global_idx determines position
     print_simulation_info(N_dim, N, nThreads, nConfs, Beta, sizeof(prng_engine), true);
 #endif
 
@@ -201,7 +202,6 @@ int main(int argc, char** argv) {
             write_measurement(measFile, global_mag, global_en, N);
             ioTime.stop();
         }
-        mpiTime.stop();
 
         // Aggiorna tutti i siti rossi
         computeTime.start();
