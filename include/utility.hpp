@@ -140,3 +140,33 @@ inline void classify_sites(size_t N_local, size_t N_dim,
         }
     }
 }
+// Classifica i siti in Red/Black (senza distinzione bulk/boundary)
+inline void classify_sites_by_parity(size_t N_local, size_t N_dim,
+                                     const vector<size_t>& local_L,
+                                     const vector<size_t>& global_offset,
+                                     const vector<size_t>& arr,
+                                     vector<size_t>& red_sites,
+                                     vector<size_t>& red_indices,
+                                     vector<size_t>& black_sites,
+                                     vector<size_t>& black_indices) {
+    vector<size_t> coord_buf(N_dim);
+    vector<size_t> coord_global(N_dim);
+
+    for (size_t iSite = 0; iSite < N_local; ++iSite) {
+        size_t global_idx = compute_global_index(iSite, local_L, global_offset, arr, N_dim,
+                                                  coord_buf.data(), coord_global.data());
+        size_t sum_global = 0;
+        for (size_t d = 0; d < N_dim; ++d) {
+            sum_global += coord_global[d];
+        }
+        int parity = sum_global % 2;
+
+        if (parity == 0) {
+            red_sites.push_back(iSite);
+            red_indices.push_back(global_idx);
+        } else {
+            black_sites.push_back(iSite);
+            black_indices.push_back(global_idx);
+        }
+    }
+}

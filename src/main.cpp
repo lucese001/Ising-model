@@ -149,27 +149,8 @@ int main(int argc, char** argv) {
     // Classificazione siti in Rosso/Nero (senza distinzione bulk/boundary)
     vector<size_t> red_sites, black_sites;
     vector<size_t> red_indices, black_indices;
-
-    // Classifica tutti i siti per parità
-    vector<size_t> coord_buf(N_dim);
-    vector<size_t> coord_global(N_dim);
-    for (size_t iSite = 0; iSite < N_local; ++iSite) {
-        size_t global_idx = compute_global_index(iSite, local_L, global_offset, arr, N_dim,
-                                                  coord_buf.data(), coord_global.data());
-        size_t sum_global = 0;
-        for (size_t d = 0; d < N_dim; ++d) {
-            sum_global += coord_global[d];
-        }
-        int parity = sum_global % 2;
-
-        if (parity == 0) {
-            red_sites.push_back(iSite);
-            red_indices.push_back(global_idx);
-        } else {
-            black_sites.push_back(iSite);
-            black_indices.push_back(global_idx);
-        }
-    }
+    classify_sites_by_parity(N_local, N_dim, local_L, global_offset, arr,
+                             red_sites, red_indices, black_sites, black_indices);
 
     // Inizializzazione configurazione
     initialize_configuration(conf_local, N_local, N_dim, local_L, local_L_halo,
@@ -180,9 +161,10 @@ int main(int argc, char** argv) {
     halo_buffers.resize(N_dim);
     vector<MPI_Request> requests;
 
-    // Pre-calcola indici delle facce (parity-aware)
+    // Pre-calcola indici delle facce
     vector<FaceInfo> faces = build_faces(local_L, N_dim);
-    vector<FaceCache> face_cache = build_face_cache(faces, local_L, local_L_halo, N_dim);
+    vector<FaceCache> face_cache = build_face_cache(faces, local_L, local_L_halo,
+                                                     global_offset, arr, N_dim);
 
     setupTime.stop();
 
@@ -193,16 +175,12 @@ int main(int argc, char** argv) {
                                           iConf, cart_comm);
 #endif
 
-        // Halo exchange completo (entrambe le paritá)
+        // Halo exchange completo
         mpiTime.start();
-        for (int p = 0; p < 2; ++p) {
-            start_halo_exchange(conf_local, local_L, local_L_halo, neighbors,
-                                cart_comm, N_dim, halo_buffers, faces, requests,
-                                face_cache, p, false);
-            finish_halo_exchange(requests);
-            write_halo_data(conf_local, halo_buffers, faces, local_L, local_L_halo,
-                            N_dim, face_cache, p);
-        }
+        start_full_halo_exchange(conf_local, local_L, local_L_halo, neighbors,
+                                 cart_comm, N_dim, halo_buffers, requests, face_cache);
+        finish_halo_exchange(requests);
+        write_full_halo_data(conf_local, halo_buffers, N_dim, face_cache);
         mpiTime.stop();
 
         // Aggiorna tutti i siti rossi
@@ -212,16 +190,12 @@ int main(int argc, char** argv) {
                           iConf, nThreads, N_local, 0);
         computeTime.stop();
 
-        // Halo exchange completo (entrambe le parità)
+        // Halo exchange completo
         mpiTime.start();
-        for (int p = 0; p < 2; ++p) {
-            start_halo_exchange(conf_local, local_L, local_L_halo, neighbors,
-                                cart_comm, N_dim, halo_buffers, faces, requests,
-                                face_cache, p, false);
-            finish_halo_exchange(requests);
-            write_halo_data(conf_local, halo_buffers, faces, local_L, local_L_halo,
-                            N_dim, face_cache, p);
-        }
+        start_full_halo_exchange(conf_local, local_L, local_L_halo, neighbors,
+                                 cart_comm, N_dim, halo_buffers, requests, face_cache);
+        finish_halo_exchange(requests);
+        write_full_halo_data(conf_local, halo_buffers, N_dim, face_cache);
         mpiTime.stop();
 
         // Aggiorna tutti i siti neri
@@ -233,14 +207,10 @@ int main(int argc, char** argv) {
 
         // Halo exchange finale prima di misurare energia
         mpiTime.start();
-        for (int p = 0; p < 2; ++p) {
-            start_halo_exchange(conf_local, local_L, local_L_halo, neighbors,
-                                cart_comm, N_dim, halo_buffers, faces, requests,
-                                face_cache, p, false);
-            finish_halo_exchange(requests);
-            write_halo_data(conf_local, halo_buffers, faces, local_L, local_L_halo,
-                            N_dim, face_cache, p);
-        }
+        start_full_halo_exchange(conf_local, local_L, local_L_halo, neighbors,
+                                 cart_comm, N_dim, halo_buffers, requests, face_cache);
+        finish_halo_exchange(requests);
+        write_full_halo_data(conf_local, halo_buffers, N_dim, face_cache);
         mpiTime.stop();
 
         //  Misure

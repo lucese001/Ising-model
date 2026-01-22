@@ -36,6 +36,12 @@ struct FaceCache {
     std::array<vector<size_t>, 2> idx_plus;       // Indici del boundary positivo (per fare Send)
     std::array<vector<size_t>, 2> idx_halo_minus; // Indici della regione halo negativa (per fare Recv/Write)
     std::array<vector<size_t>, 2> idx_halo_plus;  // Indici della regione halo positiva (per fare Recv/Write)
+
+    // Indici completi (tutte le parità insieme) per scambio non-parity-aware
+    vector<size_t> all_idx_minus;
+    vector<size_t> all_idx_plus;
+    vector<size_t> all_idx_halo_minus;
+    vector<size_t> all_idx_halo_plus;
 };
 
 // Costruisce le informazioni delle facce per lo scambio halo
@@ -52,16 +58,19 @@ inline vector<FaceInfo> build_faces(const vector<size_t>& local_L, size_t N_dim)
     return faces;
 }
 
-inline vector<FaceCache> 
+inline vector<FaceCache>
 build_face_cache(const vector<FaceInfo>& faces,
                  const vector<size_t>& local_L,
                  const vector<size_t>& local_L_halo,
+                 const vector<size_t>& global_offset,
+                 const vector<size_t>& arr,
                  size_t N_dim)
 {
     vector<FaceCache> cache(N_dim);
 
     vector<size_t> coord_face;
     vector<size_t> coord_full(N_dim);
+    vector<size_t> coord_global(N_dim);
 
     for (size_t d = 0; d < N_dim; ++d) {
 
@@ -81,6 +90,12 @@ build_face_cache(const vector<FaceInfo>& faces,
             cache[d].idx_halo_plus[p].reserve(face_size/2);
         }
 
+        // Reserve space for all-parity vectors
+        cache[d].all_idx_minus.reserve(face_size);
+        cache[d].all_idx_plus.reserve(face_size);
+        cache[d].all_idx_halo_minus.reserve(face_size);
+        cache[d].all_idx_halo_plus.reserve(face_size);
+
         coord_face.resize(face_dims.size());
 
         for (size_t i = 0; i < face_size; ++i) {
@@ -88,45 +103,84 @@ build_face_cache(const vector<FaceInfo>& faces,
             index_to_coord(i, face_dims.size(),
                            face_dims.data(), coord_face.data());
 
-            // copia coordinate della faccia
+            // copia coordinate della faccia (in coordinate halo: +1 offset)
             for (size_t j = 0; j < face_to_full.size(); ++j)
                 coord_full[face_to_full[j]] = coord_face[j] + 1;
 
-            // faccia meno (boundary interno a coord=1)
+            // faccia meno (boundary interno a coord_halo=1, cioè coord_local=0)
             coord_full[d] = 1;
             size_t idx_inner_minus =
                 coord_to_index(N_dim, local_L_halo.data(), coord_full.data());
 
-            size_t gidx = compute_global_index(coord_full);
-            int parity = gidx & 1;
+            // Calcola coordinate globali per la parità
+            // coord_local = coord_halo - 1, coord_global = coord_local + global_offset
+            for (size_t k = 0; k < N_dim; ++k) {
+                coord_global[k] = (coord_full[k] - 1) + global_offset[k];
+            }
+            size_t sum_global = 0;
+            for (size_t k = 0; k < N_dim; ++k) {
+                sum_global += coord_global[k];
+            }
+            int parity = sum_global & 1;
 
             cache[d].idx_minus[parity].push_back(idx_inner_minus);
+            cache[d].all_idx_minus.push_back(idx_inner_minus);
 
-            // halo meno (a coord=0) - calcola parity correttamente per l'halo
+            // halo meno (a coord_halo=0, che rappresenta coord_global = global_offset - 1 con PBC)
             coord_full[d] = 0;
-            gidx = compute_global_index(coord_full);
-            int parity_halo_minus = gidx & 1;
-            cache[d].idx_halo_minus[parity_halo_minus].push_back(
-                coord_to_index(N_dim, local_L_halo.data(), coord_full.data())
-            );
+            // Per l'halo meno, la coordinata globale nella dimensione d è (global_offset[d] - 1 + arr[d]) % arr[d]
+            for (size_t k = 0; k < N_dim; ++k) {
+                if (k == d) {
+                    coord_global[k] = (global_offset[k] + arr[k] - 1) % arr[k];
+                } else {
+                    coord_global[k] = (coord_full[k] - 1) + global_offset[k];
+                }
+            }
+            sum_global = 0;
+            for (size_t k = 0; k < N_dim; ++k) {
+                sum_global += coord_global[k];
+            }
+            int parity_halo_minus = sum_global & 1;
+            size_t idx_halo_minus_val = coord_to_index(N_dim, local_L_halo.data(), coord_full.data());
+            cache[d].idx_halo_minus[parity_halo_minus].push_back(idx_halo_minus_val);
+            cache[d].all_idx_halo_minus.push_back(idx_halo_minus_val);
 
-            // faccia più (boundary interno a coord=local_L[d])
+            // faccia più (boundary interno a coord_halo=local_L[d], cioè coord_local=local_L[d]-1)
             coord_full[d] = local_L[d];
             size_t idx_inner_plus =
                 coord_to_index(N_dim, local_L_halo.data(), coord_full.data());
 
-            gidx = compute_global_index(coord_full);
-            parity = gidx & 1;
+            // Calcola coordinate globali
+            for (size_t k = 0; k < N_dim; ++k) {
+                coord_global[k] = (coord_full[k] - 1) + global_offset[k];
+            }
+            sum_global = 0;
+            for (size_t k = 0; k < N_dim; ++k) {
+                sum_global += coord_global[k];
+            }
+            parity = sum_global & 1;
 
             cache[d].idx_plus[parity].push_back(idx_inner_plus);
+            cache[d].all_idx_plus.push_back(idx_inner_plus);
 
-            // halo più (a coord=local_L[d]+1) - calcola parity correttamente per l'halo
+            // halo più (a coord_halo=local_L[d]+1, che rappresenta coord_global = global_offset + local_L con PBC)
             coord_full[d] = local_L[d] + 1;
-            gidx = compute_global_index(coord_full);
-            int parity_halo_plus = gidx & 1;
-            cache[d].idx_halo_plus[parity_halo_plus].push_back(
-                coord_to_index(N_dim, local_L_halo.data(), coord_full.data())
-            );
+            // Per l'halo più, la coordinata globale nella dimensione d è (global_offset[d] + local_L[d]) % arr[d]
+            for (size_t k = 0; k < N_dim; ++k) {
+                if (k == d) {
+                    coord_global[k] = (global_offset[k] + local_L[k]) % arr[k];
+                } else {
+                    coord_global[k] = (coord_full[k] - 1) + global_offset[k];
+                }
+            }
+            sum_global = 0;
+            for (size_t k = 0; k < N_dim; ++k) {
+                sum_global += coord_global[k];
+            }
+            int parity_halo_plus = sum_global & 1;
+            size_t idx_halo_plus_val = coord_to_index(N_dim, local_L_halo.data(), coord_full.data());
+            cache[d].idx_halo_plus[parity_halo_plus].push_back(idx_halo_plus_val);
+            cache[d].all_idx_halo_plus.push_back(idx_halo_plus_val);
         }
     }
 
@@ -494,6 +548,95 @@ inline void halo_index(MPI_Comm cart_comm, int N_dim,
     for (int d = 0; d < N_dim; ++d) {
         neighbors[d].resize(2);
         MPI_Cart_shift(cart_comm, d, 1, &neighbors[d][0], &neighbors[d][1]);
+    }
+}
+
+// ============================================================================
+// Full halo exchange functions (non-parity-aware, exchanges all sites at once)
+// ============================================================================
+
+// Inizia lo scambio halo completo (tutte le parità)
+inline void start_full_halo_exchange(
+    vector<int8_t>& conf_local,
+    const vector<size_t>& local_L,
+    const vector<size_t>& local_L_halo,
+    const vector<vector<int>>& neighbors,
+    MPI_Comm cart_comm,
+    size_t N_dim,
+    HaloBuffers& buffers,
+    vector<MPI_Request>& requests,
+    const vector<FaceCache>& cache)
+{
+    requests.clear();
+
+    buffers.send_minus.resize(N_dim);
+    buffers.send_plus.resize(N_dim);
+    buffers.recv_minus.resize(N_dim);
+    buffers.recv_plus.resize(N_dim);
+
+    for (size_t d = 0; d < N_dim; ++d) {
+        const size_t face_size = cache[d].face_size;
+
+        buffers.send_minus[d].resize(face_size);
+        buffers.send_plus[d].resize(face_size);
+        buffers.recv_minus[d].resize(face_size);
+        buffers.recv_plus[d].resize(face_size);
+
+        // Pack data from boundary cells
+        for (size_t i = 0; i < face_size; ++i) {
+            buffers.send_minus[d][i] = conf_local[cache[d].all_idx_minus[i]];
+            buffers.send_plus[d][i] = conf_local[cache[d].all_idx_plus[i]];
+        }
+
+        int tag_minus = 100 + d;
+        int tag_plus  = 200 + d;
+
+        MPI_Request req;
+
+        // Receive from neighbor "behind"
+        MPI_Irecv(buffers.recv_minus[d].data(),
+                  face_size, MPI_INT8_T,
+                  neighbors[d][0], tag_plus,
+                  cart_comm, &req);
+        requests.push_back(req);
+
+        // Receive from neighbor "ahead"
+        MPI_Irecv(buffers.recv_plus[d].data(),
+                  face_size, MPI_INT8_T,
+                  neighbors[d][1], tag_minus,
+                  cart_comm, &req);
+        requests.push_back(req);
+
+        // Send to neighbor "behind"
+        MPI_Isend(buffers.send_minus[d].data(),
+                  face_size, MPI_INT8_T,
+                  neighbors[d][0], tag_minus,
+                  cart_comm, &req);
+        requests.push_back(req);
+
+        // Send to neighbor "ahead"
+        MPI_Isend(buffers.send_plus[d].data(),
+                  face_size, MPI_INT8_T,
+                  neighbors[d][1], tag_plus,
+                  cart_comm, &req);
+        requests.push_back(req);
+    }
+}
+
+// Scrive i dati ricevuti nelle regioni halo (versione completa)
+inline void write_full_halo_data(
+    vector<int8_t>& conf_local,
+    const HaloBuffers& buffers,
+    size_t N_dim,
+    const vector<FaceCache>& cache)
+{
+    for (size_t d = 0; d < N_dim; ++d) {
+        const size_t face_size = cache[d].face_size;
+
+        for (size_t i = 0; i < face_size; ++i) {
+            conf_local[cache[d].all_idx_halo_minus[i]] = buffers.recv_minus[d][i];
+            conf_local[cache[d].all_idx_halo_plus[i]] = buffers.recv_plus[d][i];
+        }
     }
 }
 
