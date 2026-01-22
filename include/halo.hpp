@@ -335,13 +335,13 @@ inline void start_halo_exchange(
             buffers.send_plus[d][i] = conf_local[cache[d].idx_plus[parity][i]];
         }
 
-        // DEBUG: Print face data being sent
+        // DEBUG: Print data facce
         if (debug_print) {
             const char* dim_name = (d == 0) ? "X" : (d == 1) ? "Y" : "Z";
 
             printf("[Rank %d] === SENDING dim=%zu (%s), parity=%d ===\n", rank, d, dim_name, parity);
 
-            // Print MINUS face (sending to neighbor behind)
+            // Print faccia meno
             printf("[Rank %d] FACE MINUS (dim %s, coord=%zu=1) -> neighbor %d:\n",
                    rank, dim_name, d, neighbors[d][0]);
             printf("[Rank %d]   indices: ", rank);
@@ -357,7 +357,7 @@ inline void start_halo_exchange(
             if (face_size > 10) printf("...");
             printf("\n");
 
-            // Print PLUS face (sending to neighbor ahead)
+            // Print faccia piú
             printf("[Rank %d] FACE PLUS (dim %s, coord=%zu=%zu) -> neighbor %d:\n",
                    rank, dim_name, d, local_L[d], neighbors[d][1]);
             printf("[Rank %d]   indices: ", rank);

@@ -150,7 +150,7 @@ int main(int argc, char** argv) {
     vector<size_t> red_sites, black_sites;
     vector<size_t> red_indices, black_indices;
 
-    // Classifica TUTTI i siti per parità
+    // Classifica tutti i siti per parità
     vector<size_t> coord_buf(N_dim);
     vector<size_t> coord_global(N_dim);
     for (size_t iSite = 0; iSite < N_local; ++iSite) {
@@ -175,68 +175,14 @@ int main(int argc, char** argv) {
     initialize_configuration(conf_local, N_local, N_dim, local_L, local_L_halo,
                              global_offset, arr, seed);
 
-    // Buffer per halo exchange (senza parity - scambia TUTTO)
-    vector<vector<int8_t>> send_minus(N_dim), send_plus(N_dim);
-    vector<vector<int8_t>> recv_minus(N_dim), recv_plus(N_dim);
+    // Buffer e cache per halo exchange (usando funzioni da halo.hpp)
+    HaloBuffers halo_buffers;
+    halo_buffers.resize(N_dim);
+    vector<MPI_Request> requests;
 
-    // Pre-calcola indici delle facce (TUTTI i siti, non per parità)
-    vector<vector<size_t>> face_minus_idx(N_dim), face_plus_idx(N_dim);
-    vector<vector<size_t>> halo_minus_idx(N_dim), halo_plus_idx(N_dim);
-
-    for (size_t d = 0; d < N_dim; ++d) {
-        // Calcola dimensione faccia
-        size_t face_size = 1;
-        for (size_t k = 0; k < N_dim; ++k) {
-            if (k != d) face_size *= local_L[k];
-        }
-
-        send_minus[d].resize(face_size);
-        send_plus[d].resize(face_size);
-        recv_minus[d].resize(face_size);
-        recv_plus[d].resize(face_size);
-        face_minus_idx[d].resize(face_size);
-        face_plus_idx[d].resize(face_size);
-        halo_minus_idx[d].resize(face_size);
-        halo_plus_idx[d].resize(face_size);
-
-        // Costruisci indici
-        vector<size_t> coord_face(N_dim - 1);
-        vector<size_t> coord_full(N_dim);
-        vector<size_t> face_dims;
-        for (size_t k = 0; k < N_dim; ++k) {
-            if (k != d) face_dims.push_back(local_L[k]);
-        }
-
-        for (size_t i = 0; i < face_size; ++i) {
-            index_to_coord(i, face_dims.size(), face_dims.data(), coord_face.data());
-
-            // Mappa coordinate faccia a coordinate full
-            size_t face_idx = 0;
-            for (size_t k = 0; k < N_dim; ++k) {
-                if (k < d) {
-                    coord_full[k] = coord_face[face_idx++] + 1;  // +1 per halo offset
-                } else if (k > d) {
-                    coord_full[k] = coord_face[face_idx++] + 1;
-                }
-            }
-
-            // Faccia meno (coord[d] = 1 in halo coords = 0 in local coords)
-            coord_full[d] = 1;
-            face_minus_idx[d][i] = coord_to_index(N_dim, local_L_halo.data(), coord_full.data());
-
-            // Halo meno (coord[d] = 0)
-            coord_full[d] = 0;
-            halo_minus_idx[d][i] = coord_to_index(N_dim, local_L_halo.data(), coord_full.data());
-
-            // Faccia più (coord[d] = local_L[d] in halo coords)
-            coord_full[d] = local_L[d];
-            face_plus_idx[d][i] = coord_to_index(N_dim, local_L_halo.data(), coord_full.data());
-
-            // Halo più (coord[d] = local_L[d] + 1)
-            coord_full[d] = local_L[d] + 1;
-            halo_plus_idx[d][i] = coord_to_index(N_dim, local_L_halo.data(), coord_full.data());
-        }
-    }
+    // Pre-calcola indici delle facce (parity-aware)
+    vector<FaceInfo> faces = build_faces(local_L, N_dim);
+    vector<FaceCache> face_cache = build_face_cache(faces, local_L, local_L_halo, N_dim);
 
     setupTime.stop();
 
@@ -247,165 +193,57 @@ int main(int argc, char** argv) {
                                           iConf, cart_comm);
 #endif
 
-        // ===== ALGORITMO SEMPLIFICATO =====
-        // 1. Scambia TUTTO l'halo (tutti i siti delle facce)
-        // 2. Aggiorna tutti i siti ROSSI
-        // 3. Scambia TUTTO l'halo
-        // 4. Aggiorna tutti i siti NERI
-
-        // --- Passo 1: Halo exchange completo ---
+        // Halo exchange completo (entrambe le paritá)
         mpiTime.start();
-        vector<MPI_Request> requests;
-
-        for (size_t d = 0; d < N_dim; ++d) {
-            size_t face_size = face_minus_idx[d].size();
-
-            // Prepara buffer di invio
-            for (size_t i = 0; i < face_size; ++i) {
-                send_minus[d][i] = conf_local[face_minus_idx[d][i]];
-                send_plus[d][i] = conf_local[face_plus_idx[d][i]];
-            }
-
-            int tag_minus = 100 + d;
-            int tag_plus = 200 + d;
-            MPI_Request req;
-
-            // Ricevi da vicino "dietro" (sarà scritto in halo minus)
-            MPI_Irecv(recv_minus[d].data(), face_size, MPI_INT8_T,
-                      neighbors[d][0], tag_plus, cart_comm, &req);
-            requests.push_back(req);
-
-            // Ricevi da vicino "avanti" (sarà scritto in halo plus)
-            MPI_Irecv(recv_plus[d].data(), face_size, MPI_INT8_T,
-                      neighbors[d][1], tag_minus, cart_comm, &req);
-            requests.push_back(req);
-
-            // Invia a vicino "dietro"
-            MPI_Isend(send_minus[d].data(), face_size, MPI_INT8_T,
-                      neighbors[d][0], tag_minus, cart_comm, &req);
-            requests.push_back(req);
-
-            // Invia a vicino "avanti"
-            MPI_Isend(send_plus[d].data(), face_size, MPI_INT8_T,
-                      neighbors[d][1], tag_plus, cart_comm, &req);
-            requests.push_back(req);
-        }
-
-        MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
-
-        // Scrivi dati ricevuti nell'halo
-        for (size_t d = 0; d < N_dim; ++d) {
-            size_t face_size = halo_minus_idx[d].size();
-            for (size_t i = 0; i < face_size; ++i) {
-                conf_local[halo_minus_idx[d][i]] = recv_minus[d][i];
-                conf_local[halo_plus_idx[d][i]] = recv_plus[d][i];
-            }
+        for (int p = 0; p < 2; ++p) {
+            start_halo_exchange(conf_local, local_L, local_L_halo, neighbors,
+                                cart_comm, N_dim, halo_buffers, faces, requests,
+                                face_cache, p, false);
+            finish_halo_exchange(requests);
+            write_halo_data(conf_local, halo_buffers, faces, local_L, local_L_halo,
+                            N_dim, face_cache, p);
         }
         mpiTime.stop();
 
-        // --- Passo 2: Aggiorna tutti i siti ROSSI ---
+        // Aggiorna tutti i siti rossi
         computeTime.start();
         metropolis_update(conf_local, red_sites, red_indices,
                           local_L, local_L_halo, gen,
                           iConf, nThreads, N_local, 0);
         computeTime.stop();
 
-        // --- Passo 3: Halo exchange completo ---
+        // Halo exchange completo (entrambe le parità)
         mpiTime.start();
-        requests.clear();
-
-        for (size_t d = 0; d < N_dim; ++d) {
-            size_t face_size = face_minus_idx[d].size();
-
-            for (size_t i = 0; i < face_size; ++i) {
-                send_minus[d][i] = conf_local[face_minus_idx[d][i]];
-                send_plus[d][i] = conf_local[face_plus_idx[d][i]];
-            }
-
-            int tag_minus = 100 + d;
-            int tag_plus = 200 + d;
-            MPI_Request req;
-
-            MPI_Irecv(recv_minus[d].data(), face_size, MPI_INT8_T,
-                      neighbors[d][0], tag_plus, cart_comm, &req);
-            requests.push_back(req);
-
-            MPI_Irecv(recv_plus[d].data(), face_size, MPI_INT8_T,
-                      neighbors[d][1], tag_minus, cart_comm, &req);
-            requests.push_back(req);
-
-            MPI_Isend(send_minus[d].data(), face_size, MPI_INT8_T,
-                      neighbors[d][0], tag_minus, cart_comm, &req);
-            requests.push_back(req);
-
-            MPI_Isend(send_plus[d].data(), face_size, MPI_INT8_T,
-                      neighbors[d][1], tag_plus, cart_comm, &req);
-            requests.push_back(req);
-        }
-
-        MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
-
-        for (size_t d = 0; d < N_dim; ++d) {
-            size_t face_size = halo_minus_idx[d].size();
-            for (size_t i = 0; i < face_size; ++i) {
-                conf_local[halo_minus_idx[d][i]] = recv_minus[d][i];
-                conf_local[halo_plus_idx[d][i]] = recv_plus[d][i];
-            }
+        for (int p = 0; p < 2; ++p) {
+            start_halo_exchange(conf_local, local_L, local_L_halo, neighbors,
+                                cart_comm, N_dim, halo_buffers, faces, requests,
+                                face_cache, p, false);
+            finish_halo_exchange(requests);
+            write_halo_data(conf_local, halo_buffers, faces, local_L, local_L_halo,
+                            N_dim, face_cache, p);
         }
         mpiTime.stop();
 
-        // --- Passo 4: Aggiorna tutti i siti NERI ---
+        // Aggiorna tutti i siti neri
         computeTime.start();
         metropolis_update(conf_local, black_sites, black_indices,
                           local_L, local_L_halo, gen,
                           iConf, nThreads, N_local, 1);
         computeTime.stop();
 
-        // --- Passo 5: Halo exchange finale prima di misurare energia ---
+        // Halo exchange finale prima di misurare energia
         mpiTime.start();
-        requests.clear();
-
-        for (size_t d = 0; d < N_dim; ++d) {
-            size_t face_size = face_minus_idx[d].size();
-
-            for (size_t i = 0; i < face_size; ++i) {
-                send_minus[d][i] = conf_local[face_minus_idx[d][i]];
-                send_plus[d][i] = conf_local[face_plus_idx[d][i]];
-            }
-
-            int tag_minus = 100 + d;
-            int tag_plus = 200 + d;
-            MPI_Request req;
-
-            MPI_Irecv(recv_minus[d].data(), face_size, MPI_INT8_T,
-                      neighbors[d][0], tag_plus, cart_comm, &req);
-            requests.push_back(req);
-
-            MPI_Irecv(recv_plus[d].data(), face_size, MPI_INT8_T,
-                      neighbors[d][1], tag_minus, cart_comm, &req);
-            requests.push_back(req);
-
-            MPI_Isend(send_minus[d].data(), face_size, MPI_INT8_T,
-                      neighbors[d][0], tag_minus, cart_comm, &req);
-            requests.push_back(req);
-
-            MPI_Isend(send_plus[d].data(), face_size, MPI_INT8_T,
-                      neighbors[d][1], tag_plus, cart_comm, &req);
-            requests.push_back(req);
-        }
-
-        MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
-
-        for (size_t d = 0; d < N_dim; ++d) {
-            size_t face_size = halo_minus_idx[d].size();
-            for (size_t i = 0; i < face_size; ++i) {
-                conf_local[halo_minus_idx[d][i]] = recv_minus[d][i];
-                conf_local[halo_plus_idx[d][i]] = recv_plus[d][i];
-            }
+        for (int p = 0; p < 2; ++p) {
+            start_halo_exchange(conf_local, local_L, local_L_halo, neighbors,
+                                cart_comm, N_dim, halo_buffers, faces, requests,
+                                face_cache, p, false);
+            finish_halo_exchange(requests);
+            write_halo_data(conf_local, halo_buffers, faces, local_L, local_L_halo,
+                            N_dim, face_cache, p);
         }
         mpiTime.stop();
 
-        // --- Misure ---
+        //  Misure
         computeTime.start();
         double local_mag = computeMagnetization_local(conf_local, N_local,
                                                       local_L, local_L_halo);
