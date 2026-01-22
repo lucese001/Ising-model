@@ -81,6 +81,7 @@ inline size_t compute_global_index(const vector<size_t>& coord_full) {
 // Classifica i siti in bulk (interni) e boundary (al bordo)
 // Popola anche i vettori con gli indici globali corrispondenti
 // Classifica i siti in bulk/boundary e Red/Black
+// Non usata perché il vecchio algoritmo era troppo casino!
 inline void classify_sites(size_t N_local, size_t N_dim,
                            const vector<size_t>& local_L,
                            const vector<size_t>& global_offset,

@@ -183,6 +183,26 @@ int main(int argc, char** argv) {
         write_full_halo_data(conf_local, halo_buffers, N_dim, face_cache);
         mpiTime.stop();
 
+        //  Misure
+        computeTime.start();
+        double local_mag = computeMagnetization_local(conf_local, N_local,
+                                                      local_L, local_L_halo);
+        double local_en = computeEn(conf_local, N_local, local_L, local_L_halo);
+        computeTime.stop();
+
+        mpiTime.start();
+        double global_mag, global_en;
+        MPI_Reduce(&local_mag, &global_mag, 1, MPI_DOUBLE, MPI_SUM, 0, cart_comm);
+        MPI_Reduce(&local_en, &global_en, 1, MPI_DOUBLE, MPI_SUM, 0, cart_comm);
+        mpiTime.stop();
+
+        if (world_rank == 0) {
+            ioTime.start();
+            write_measurement(measFile, global_mag, global_en, N);
+            ioTime.stop();
+        }
+        mpiTime.stop();
+
         // Aggiorna tutti i siti rossi
         computeTime.start();
         metropolis_update(conf_local, red_sites, red_indices,
@@ -204,8 +224,10 @@ int main(int argc, char** argv) {
                           local_L, local_L_halo, gen,
                           iConf, nThreads, N_local, 1);
         computeTime.stop();
+    }
 
-        // Halo exchange finale prima di misurare energia
+    // Misurazione configurazione finale
+    // Halo exchange finale prima di misurare energia
         mpiTime.start();
         start_full_halo_exchange(conf_local, local_L, local_L_halo, neighbors,
                                  cart_comm, N_dim, halo_buffers, requests, face_cache);
@@ -231,7 +253,6 @@ int main(int argc, char** argv) {
             write_measurement(measFile, global_mag, global_en, N);
             ioTime.stop();
         }
-    }
 
     if (world_rank == 0 && measFile) {
         fclose(measFile);
