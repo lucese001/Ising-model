@@ -199,7 +199,7 @@ int main(int argc, char** argv) {
 
         if (world_rank == 0) {
             if (sweep_mode == 1) {
-                printf("\ Temperatura %d/%d: Beta = %lg \n", iTemp + 1, n_temps, Beta);
+                printf(" Temperatura %d/%d: Beta = %lg \n", iTemp + 1, n_temps, Beta);
             }
         }
 
