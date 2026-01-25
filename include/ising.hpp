@@ -193,7 +193,77 @@ inline double computeMagnetization_local(const vector<int8_t>& conf, size_t N_lo
     return (double) mag;
 }
 
-// Crea una configurazione iniziale casuale usando l'indice globale 
+// Struttura per accumulare le osservabili durante la simulazione
+struct Observables {
+    double sum_mag;      // Somma delle magnetizzazioni (per <M>)
+    double sum_abs_mag;  // Somma dei valori assoluti (per <|M|>)
+    double sum_mag2;     // Somma dei quadrati (per chi, ovvero suscettibilitá magnetica)
+    double sum_en;       // Somma delle energie (per <E>)
+    double sum_en2;      // Somma dei quadrati (per C_v)
+    size_t n_samples;    // Numero di campioni
+
+    Observables() : sum_mag(0), sum_abs_mag(0), sum_mag2(0),
+                               sum_en(0), sum_en2(0), n_samples(0) {}
+
+    void reset() {
+        sum_mag = sum_abs_mag = sum_mag2 = sum_en = sum_en2 = 0;
+        n_samples = 0;
+    }
+
+    // Aggiunge una misurazione (magnetizzazione ed energia per sito)
+    void add_measurement(double mag_per_site, double en_per_site) {
+        sum_mag += mag_per_site;
+        sum_abs_mag += std::abs(mag_per_site);
+        sum_mag2 += mag_per_site * mag_per_site;
+        sum_en += en_per_site;
+        sum_en2 += en_per_site * en_per_site;
+        n_samples++;
+    }
+
+    // Calcola la magnetizzazione media <M>
+    double avg_magnetization() const {
+        return (n_samples > 0) ? sum_mag / n_samples : 0.0;
+    }
+
+    // Calcola la magnetizzazione media in valore assoluto <|M|>
+    double avg_abs_magnetization() const {
+        return (n_samples > 0) ? sum_abs_mag / n_samples : 0.0;
+    }
+
+    // Calcola l'energia media <E>
+    double avg_energy() const {
+        return (n_samples > 0) ? sum_en / n_samples : 0.0;
+    }
+
+    // Calcola <M^2>
+    double avg_mag_squared() const {
+        return (n_samples > 0) ? sum_mag2 / n_samples : 0.0;
+    }
+
+    // Calcola <E^2>
+    double avg_energy_squared() const {
+        return (n_samples > 0) ? sum_en2 / n_samples : 0.0;
+    }
+
+    // Suscettività magnetica: chi = N * beta * (<M^2> - <M>^2)
+    // Nota: M qui è per sito, quindi chi = N * beta * (<m^2> - <m>^2)
+    //       dove m = M/N è la magnetizzazione per sito
+    double magnetic_susceptibility(double beta, size_t N) const {
+        double avg_m = avg_magnetization();
+        double avg_m2 = avg_mag_squared();
+        return N * beta * (avg_m2 - avg_m * avg_m);
+    }
+
+    // Capacità termica: C_v = N * beta^2 * (<E^2> - <E>^2)
+    // Nota: E qui è per sito
+    double heat_capacity(double beta, size_t N) const {
+        double avg_e = avg_energy();
+        double avg_e2 = avg_energy_squared();
+        return N * beta * beta * (avg_e2 - avg_e * avg_e);
+    }
+};
+
+// Crea una configurazione iniziale casuale usando l'indice globale
 // (per garantire riproducibilità) indipendente dal numero di rank/thread
 inline void initialize_configuration(vector<int8_t>& conf_local,
                                      size_t N_local,

@@ -68,16 +68,6 @@ inline size_t compute_global_index(size_t iSite_local,
     return coord_to_index(N_dim, arr.data(), coord_global);
 }
 
-// Overload semplificato per calcolare la parità dalle coordinate
-// Ritorna la somma delle coordinate (usata per calcolare parità)
-inline size_t compute_global_index(const vector<size_t>& coord_full) {
-    size_t sum = 0;
-    for (size_t d = 0; d < coord_full.size(); ++d) {
-        sum += coord_full[d];
-    }
-    return sum;
-}
-
 // Classifica i siti in bulk (interni) e boundary (al bordo)
 // Popola anche i vettori con gli indici globali corrispondenti
 // Classifica i siti in bulk/boundary e Red/Black

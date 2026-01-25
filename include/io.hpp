@@ -10,12 +10,26 @@ using std::vector;
 
 // Legge i parametri di simulazione dal file dimensioni.txt
 // Restituisce true se la lettura è andata a buon fine, false altrimenti
+// Formato file:
+//   N_dim
+//   arr[0] arr[1] ... arr[N_dim-1]
+//   nConfs
+//   nThreads
+//   Beta (usato solo se sweep_mode=0)
+//   seed
+//   sweep_mode (0=singola temperatura, 1=sweep)
+//   [se sweep_mode=1] Beta_start Beta_end N_temp_steps
 inline bool read_input_file(const char* filename,
                             size_t& N_dim,
                             vector<size_t>& arr,
                             size_t& nConfs,
                             size_t& nThreads,
-                            double& Beta,size_t& seed) {
+                            double& Beta,
+                            size_t& seed,
+                            int& sweep_mode,
+                            double& Beta_start,
+                            double& Beta_end,
+                            int& N_temp_steps) {
     FILE* fp = fopen(filename, "r");
     if (!fp) {
         fprintf(stderr, "Errore apertura %s: ", filename);
@@ -27,7 +41,7 @@ inline bool read_input_file(const char* filename,
         fprintf(stderr, "Errore lettura N_dim\n");
         fclose(fp);
         return false;
-    }   
+    }
     arr.resize(N_dim);
 
     for (size_t i = 0; i < N_dim; ++i) {
@@ -37,41 +51,81 @@ inline bool read_input_file(const char* filename,
             return false;
         }
     }
-    
-    if (fscanf(fp, "%d", &nConfs) != 1) {
+
+    if (fscanf(fp, "%zu", &nConfs) != 1) {
         fprintf(stderr, "Errore lettura nConfs\n");
         fclose(fp);
         return false;
     }
-    
+
     if (fscanf(fp, "%zu", &nThreads) != 1) {
         fprintf(stderr, "Errore lettura nThreads\n");
         fclose(fp);
         return false;
     }
-    
+
     if (fscanf(fp, "%lf", &Beta) != 1) {
         fprintf(stderr, "Errore lettura Beta\n");
         fclose(fp);
         return false;
     }
-    
+
     if (fscanf(fp, "%zu", &seed) != 1) {
         fprintf(stderr, "Errore lettura seed\n");
         fclose(fp);
         return false;
     }
-    
+
+    // Leggi sweep_mode (default 0 se non presente)
+    sweep_mode = 0;
+    Beta_start = Beta;
+    Beta_end = Beta;
+    N_temp_steps = 1;
+
+    if (fscanf(fp, "%d", &sweep_mode) == 1) {
+        if (sweep_mode == 1) {
+            // Leggi parametri sweep
+            if (fscanf(fp, "%lf %lf %d", &Beta_start, &Beta_end, &N_temp_steps) != 3) {
+                fprintf(stderr, "Errore lettura parametri sweep (Beta_start Beta_end N_temp_steps)\n");
+                fclose(fp);
+                return false;
+            }
+            if (N_temp_steps < 1) N_temp_steps = 1;
+        }
+    }
+
     fclose(fp);
-    
-    // Stampa ció che hai letto in caso (debug)
-    printf("Rank 0 ha letto: N_dim=%zu, nConfs=%d, nThreads=%zu, Beta=%lg, seed=%zu\n", 
-           N_dim, nConfs, nThreads, Beta, seed);
+
+    // Stampa ciò che hai letto
+    printf("Rank 0 ha letto: N_dim=%zu, nConfs=%zu, nThreads=%zu, seed=%zu\n",
+           N_dim, nConfs, nThreads, seed);
     printf("Dimensioni: ");
     for (size_t i = 0; i < N_dim; ++i) printf("%zu ", arr[i]);
     printf("\n");
-    
+
+    if (sweep_mode == 0) {
+        printf("Modo: singola temperatura, Beta=%lg\n", Beta);
+    } else {
+        printf("Modo: temperature sweep, Beta da %lg a %lg in %d passi\n",
+               Beta_start, Beta_end, N_temp_steps);
+    }
+
     return true;
+}
+
+// Scrive intestazione file output per sweep mode
+inline void write_sweep_header(FILE* measFile) {
+    fprintf(measFile, "# Beta  <m>  <|m|>  <e>  chi  Cv\n");
+    fflush(measFile);
+}
+
+// Scrive una riga di risultati per sweep mode (valori per sito)
+inline void write_sweep_measurement(FILE* measFile, double beta,
+                                     double avg_mag, double avg_mag_abs,
+                                     double avg_en, double chi, double Cv) {
+    fprintf(measFile, "%lg %lg %lg %lg %lg %lg\n",
+            beta, avg_mag, avg_mag_abs, avg_en, chi, Cv);
+    fflush(measFile);
 }
 
 // Stampa il riepilogo delle prestazioni alla fine della simulazione
@@ -97,20 +151,19 @@ inline void write_measurement(FILE* measFile, double mag, double en, size_t N) {
     fflush(measFile);
 }
 
-// Stampa il progresso della simulazione
-/*inline void print_progress(int iConf, int nConfs, int world_size) {
-    if ((iConf + 1) % 10 == 0 || (iConf + 1) == nConfs) {
-        int global_progress = 0;
-        for (int r = 0; r < world_size; ++r) {
-            int r_done = std::min(iConf + 1, 
-                           (int)(nConfs / world_size + (r < (nConfs % world_size) ? 1 : 0)));
-            global_progress += r_done;
-        }
+// Stampa il progresso della simulazione (solo rank 0 dovrebbe chiamarla)
+// Stampa ogni volta che si raggiunge una nuova percentuale intera
+inline void print_progress(int iConf, int nConfs) {
+    int current_percent = ((iConf + 1) * 100) / nConfs;
+    int prev_percent = (iConf * 100) / nConfs;
 
-        printf("Progress: %d/%d (%.1f%%)\n", 
-               global_progress, nConfs, 100.0 * global_progress / nConfs);
+    // Stampa solo quando si passa a una nuova percentuale
+    if (current_percent > prev_percent || iConf == 0) {
+        printf("Progress: %d%% (%d/%d configurations)\n",
+               current_percent, iConf + 1, nConfs);
+        fflush(stdout);
     }
-}*/
+}
 
 // Stampa le informazioni sulla simulazione
 inline void print_simulation_info(size_t N_dim, size_t N, size_t nThreads, int nConfs, 
@@ -155,58 +208,6 @@ inline void print_mpi_topology(int world_rank, int world_size, size_t N_dim,
         }
         MPI_Barrier(MPI_COMM_WORLD);
     }
-}
-
-// Stampa la configurazione locale per debug
-// Ogni rank stampa in ordine la propria configurazione
-inline void print_configuration_debug(const vector<int8_t>& conf_local,
-                                       const vector<size_t>& local_L,
-                                       const vector<size_t>& local_L_halo,
-                                       size_t N_dim, size_t N_local,
-                                       int world_rank, int world_size,
-                                       int iConf, MPI_Comm comm) {
-    for (int r = 0; r < world_size; ++r) {
-        if (world_rank == r) {
-            printf("RANK %d, Conf %d\n", world_rank, iConf);
-            
-            if (N_dim == 2) {
-                // Stampa come matrice 2D
-                for (size_t y = 0; y < local_L[1]; ++y) {
-                    printf("  ");
-                    for (size_t x = 0; x < local_L[0]; ++x) {
-                        // Converti coordinate locali (senza halo) in coordinate con halo
-                        size_t coord_halo[2] = {x + 1, y + 1};
-                        size_t idx_halo = coord_halo[0] + coord_halo[1] * local_L_halo[0];
-                        // Stampa '+' per spin +1, '-' per spin -1
-                        printf("%c ", conf_local[idx_halo] > 0 ? '+' : '-');
-                    }
-                    printf("\n");
-                }
-            } else {
-                // Per altre dimensioni, stampa linearmente
-                vector<size_t> coord_local(N_dim);
-                vector<size_t> coord_halo(N_dim);
-                printf("  Spins: ");
-                for (size_t i = 0; i < N_local; ++i) {
-                    index_to_coord(i, N_dim, local_L.data(), coord_local.data());
-                    for (size_t d = 0; d < N_dim; ++d) {
-                        coord_halo[d] = coord_local[d] + 1;
-                    }
-                    size_t idx_halo = coord_to_index(N_dim, local_L_halo.data(), coord_halo.data());
-                    printf("%+d ", (int)conf_local[idx_halo]);
-                    if ((i + 1) % 16 == 0 && i + 1 < N_local) printf("\n        ");
-                }
-                printf("\n");
-            }
-            fflush(stdout);
-        }
-        MPI_Barrier(comm);
-    }
-    if (world_rank == 0) {
-        printf("-----------------------------------\n");
-        fflush(stdout);
-    }
-    MPI_Barrier(comm);
 }
 
 // Stampa la configurazione GLOBALE per debug (ricostruita da tutti i rank)
