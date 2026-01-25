@@ -347,12 +347,6 @@ inline void print_face_cache_debug(
     printf("\n[Rank %d] ========== END FACE CACHE DEBUG ==========\n\n", rank);
 }
 
-// Aspetta il completamento dello scambio halo
-inline void finish_halo_exchange(vector<MPI_Request>& reqs) {
-    MPI_Waitall(reqs.size(), reqs.data(), MPI_STATUSES_IGNORE);
-    reqs.clear();
-}
-
 // Calcola gli indici dei vicini usando la topologia cartesiana MPI
 inline void halo_index(MPI_Comm cart_comm, int N_dim,
                       vector<vector<int>>& neighbors) {
@@ -434,19 +428,17 @@ inline void start_full_halo_exchange(
     }
 }
 
-// Scrive i dati ricevuti nelle regioni halo
+// Scrive i dati ricevuti nelle regioni halo (aspetta prima il completamento dello scambio)
 inline void write_full_halo_data(
     vector<int8_t>& conf_local,
     const HaloBuffers& buffers,
     size_t N_dim,
     const vector<FaceCache>& cache,
     vector<MPI_Request>& reqs)
-
+{
     // Aspetta il completamento dello scambio halo
     MPI_Waitall(reqs.size(), reqs.data(), MPI_STATUSES_IGNORE);
     reqs.clear();
-
-{
     for (size_t d = 0; d < N_dim; ++d) {
         const size_t face_size = cache[d].face_size;
 
