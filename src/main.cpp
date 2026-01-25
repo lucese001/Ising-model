@@ -41,8 +41,9 @@ size_t seed;               // seed per il generatore di numeri casuali
 int sweep_mode = 0;        // 0=singola T, 1=sweep
 double Beta_start, Beta_end;
 int N_temp_steps;
+int sample_step;           // ogni quanti sweep campionare dopo termalizzazione
 
-// Definizione della variabile statica timerCost (dichiarata in utility.hpp)
+// Definizione del timer (dichiarato in utility.hpp)
 timer timer::timerCost;
 
 int main(int argc, char** argv) {
@@ -59,7 +60,7 @@ int main(int argc, char** argv) {
     // Lettura del file di input
     if (world_rank == 0) {
         if (!read_input_file("input/dimensioni.txt", N_dim, arr, nConfs, nThreads, Beta, seed,
-                             sweep_mode, Beta_start, Beta_end, N_temp_steps)) {
+                             sample_step, sweep_mode, Beta_start, Beta_end, N_temp_steps)) {
             MPI_Abort(MPI_COMM_WORLD, 1);
             return 1;
         }
@@ -75,6 +76,7 @@ int main(int argc, char** argv) {
     MPI_Bcast(&nThreads, sizeof(size_t), MPI_BYTE, 0, MPI_COMM_WORLD);
     MPI_Bcast(&Beta, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Bcast(&seed, sizeof(size_t), MPI_BYTE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&sample_step, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&sweep_mode, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&Beta_start, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Bcast(&Beta_end, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
@@ -127,7 +129,7 @@ int main(int argc, char** argv) {
                        rank_coords, global_offset, local_L);
 
     // Vicini MPI
-    std::vector<std::vector<int>> neighbors;
+    vector<vector<int>> neighbors;
     halo_index(cart_comm, (int)N_dim, neighbors);
     omp_set_num_threads((int)nThreads);
 
@@ -177,9 +179,6 @@ int main(int argc, char** argv) {
     vector<FaceCache> face_cache = build_face_cache(faces, local_L, local_L_halo,
                                                      global_offset, arr, N_dim);
 
-    // Parametri per il sampling delle osservabili
-    double beta_crit = 0.29;
-    int step;
 
     setupTime.stop();
 
@@ -200,7 +199,7 @@ int main(int argc, char** argv) {
 
         if (world_rank == 0) {
             if (sweep_mode == 1) {
-                printf("\n=== Temperatura %d/%d: Beta = %lg ===\n", iTemp + 1, n_temps, Beta);
+                printf("\ Temperatura %d/%d: Beta = %lg \n", iTemp + 1, n_temps, Beta);
             }
         }
 
@@ -213,16 +212,9 @@ int main(int argc, char** argv) {
         int sample = 0;
         int n_meas = 0;
 
-        // Determina step di campionamento in base alla distanza da beta_crit
-        // step più grande vicino al punto critico (maggiore autocorrelazione)
-        if (std::abs(Beta - beta_crit) > 0.2) {
-            step = 1;  // lontano da Tc: poca autocorrelazione
-        } else {
-            step = 5;  // vicino a Tc: più autocorrelazione
-        }
-
         // Re-inizializza configurazione per ogni temperatura (per indipendenza)
         if (sweep_mode == 1) {
+
             initialize_configuration(conf_local, N_local, N_dim, local_L, local_L_halo,
                                      global_offset, arr, seed + iTemp);
         }
@@ -261,12 +253,12 @@ int main(int argc, char** argv) {
             mpiTime.stop();
 
             // Prendi le misure una volta completato il thermal bath (metà configurazioni)
-            if (iConf > (int)nConfs / 2 && sample >= step) {
+            if (iConf > (int)nConfs / 2 && sample >= sample_step) {
                 // Normalizza per sito
                 double mag_per_site = global_mag / N;
                 double en_per_site = global_en / N;
                 cumul_mag += mag_per_site;
-                cumul_mag_abs += std::abs(mag_per_site);
+                cumul_mag_abs += abs(mag_per_site);
                 cumul_mag_sq += mag_per_site * mag_per_site;
                 cumul_en += en_per_site;
                 cumul_en_sq += en_per_site * en_per_site;

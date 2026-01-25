@@ -17,6 +17,7 @@ using std::vector;
 //   nThreads
 //   Beta (usato solo se sweep_mode=0)
 //   seed
+//   sample_step (ogni quanti sweep campionare dopo termalizzazione)
 //   sweep_mode (0=singola temperatura, 1=sweep)
 //   [se sweep_mode=1] Beta_start Beta_end N_temp_steps
 inline bool read_input_file(const char* filename,
@@ -26,6 +27,7 @@ inline bool read_input_file(const char* filename,
                             size_t& nThreads,
                             double& Beta,
                             size_t& seed,
+                            int& sample_step,
                             int& sweep_mode,
                             double& Beta_start,
                             double& Beta_end,
@@ -76,6 +78,13 @@ inline bool read_input_file(const char* filename,
         return false;
     }
 
+    if (fscanf(fp, "%d", &sample_step) != 1) {
+        fprintf(stderr, "Errore lettura sample_step\n");
+        fclose(fp);
+        return false;
+    }
+    if (sample_step < 1) sample_step = 1;
+
     // Leggi sweep_mode (default 0 se non presente)
     sweep_mode = 0;
     Beta_start = Beta;
@@ -97,8 +106,8 @@ inline bool read_input_file(const char* filename,
     fclose(fp);
 
     // Stampa ciò che hai letto
-    printf("Rank 0 ha letto: N_dim=%zu, nConfs=%zu, nThreads=%zu, seed=%zu\n",
-           N_dim, nConfs, nThreads, seed);
+    printf("Rank 0 ha letto: N_dim=%zu, nConfs=%zu, nThreads=%zu, seed=%zu, sample_step=%d\n",
+           N_dim, nConfs, nThreads, seed, sample_step);
     printf("Dimensioni: ");
     for (size_t i = 0; i < N_dim; ++i) printf("%zu ", arr[i]);
     printf("\n");
@@ -109,6 +118,7 @@ inline bool read_input_file(const char* filename,
         printf("Modo: temperature sweep, Beta da %lg a %lg in %d passi\n",
                Beta_start, Beta_end, N_temp_steps);
     }
+    printf("Sampling: ogni %d configurazioni dopo termalizzazione\n", sample_step);
 
     return true;
 }
