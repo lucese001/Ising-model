@@ -244,8 +244,7 @@ int main(int argc, char** argv) {
             start_full_halo_exchange(conf_local, local_L, local_L_halo,
                                     neighbors, cart_comm, N_dim,
                                     halo_buffers, requests, face_cache);
-            finish_halo_exchange(requests);
-            write_full_halo_data(conf_local, halo_buffers, N_dim, face_cache);
+            write_full_halo_data(conf_local, halo_buffers, N_dim, face_cache,requests);
             mpiTime.stop();
 
             // Misure
@@ -295,8 +294,7 @@ int main(int argc, char** argv) {
             mpiTime.start();
             start_full_halo_exchange(conf_local, local_L, local_L_halo, neighbors,
                                      cart_comm, N_dim, halo_buffers, requests, face_cache);
-            finish_halo_exchange(requests);
-            write_full_halo_data(conf_local, halo_buffers, N_dim, face_cache);
+            write_full_halo_data(conf_local, halo_buffers, N_dim, face_cache,requests);
             mpiTime.stop();
 
             // Aggiorna tutti i siti neri
