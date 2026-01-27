@@ -18,6 +18,7 @@ using namespace std;
 //   Beta (usato solo se sweep_mode=0)
 //   seed
 //   sample_step (ogni quanti sweep campionare dopo termalizzazione)
+//   n_therm (numero di configurazioni per termalizzazione)
 //   sweep_mode (0=singola temperatura, 1=sweep)
 //   [se sweep_mode=1] Beta_start Beta_end N_temp_steps
 inline bool read_input_file(const char* filename,
@@ -28,6 +29,7 @@ inline bool read_input_file(const char* filename,
                             double& Beta,
                             size_t& seed,
                             int& sample_step,
+                            int& n_therm,
                             int& sweep_mode,
                             double& Beta_start,
                             double& Beta_end,
@@ -85,6 +87,13 @@ inline bool read_input_file(const char* filename,
     }
     if (sample_step < 1) sample_step = 1;
 
+    if (fscanf(fp, "%d", &n_therm) != 1) {
+        fprintf(stderr, "Errore lettura n_therm\n");
+        fclose(fp);
+        return false;
+    }
+    if (n_therm < 0) n_therm = 0;
+
     // Leggi sweep_mode (default 0 se non presente)
     sweep_mode = 0;
     Beta_start = Beta;
@@ -106,8 +115,8 @@ inline bool read_input_file(const char* filename,
     fclose(fp);
 
     // Stampa ciò che hai letto
-    printf("Rank 0 ha letto: N_dim=%zu, nConfs=%zu, nThreads=%zu, seed=%zu, sample_step=%d\n",
-           N_dim, nConfs, nThreads, seed, sample_step);
+    printf("Rank 0 ha letto: N_dim=%zu, nConfs=%zu, nThreads=%zu, seed=%zu\n",
+           N_dim, nConfs, nThreads, seed);
     printf("Dimensioni: ");
     for (size_t i = 0; i < N_dim; ++i) printf("%zu ", arr[i]);
     printf("\n");
@@ -118,6 +127,7 @@ inline bool read_input_file(const char* filename,
         printf("Modo: temperature sweep, Beta da %lg a %lg in %d passi\n",
                Beta_start, Beta_end, N_temp_steps);
     }
+    printf("Termalizzazione: %d configurazioni\n", n_therm);
     printf("Sampling: ogni %d configurazioni dopo termalizzazione\n", sample_step);
 
     return true;

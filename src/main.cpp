@@ -45,6 +45,7 @@ int sweep_mode = 0;        // 0=singola T, 1=sweep
 double Beta_start, Beta_end;
 int N_temp_steps;
 int sample_step;           // ogni quanti sweep campionare dopo termalizzazione
+int n_therm;               // numero di configurazioni per termalizzazione
 
 // Definizione del timer (dichiarato in utility.hpp)
 timer timer::timerCost;
@@ -63,7 +64,7 @@ int main(int argc, char** argv) {
     // Lettura del file di input
     if (world_rank == 0) {
         if (!read_input_file("input/dimensioni.txt", N_dim, arr, nConfs, nThreads, Beta, seed,
-                             sample_step, sweep_mode, Beta_start, Beta_end, N_temp_steps)) {
+                             sample_step, n_therm, sweep_mode, Beta_start, Beta_end, N_temp_steps)) {
             MPI_Abort(MPI_COMM_WORLD, 1);
             return 1;
         }
@@ -80,6 +81,7 @@ int main(int argc, char** argv) {
     MPI_Bcast(&Beta, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Bcast(&seed, sizeof(size_t), MPI_BYTE, 0, MPI_COMM_WORLD);
     MPI_Bcast(&sample_step, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&n_therm, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&sweep_mode, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&Beta_start, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Bcast(&Beta_end, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
@@ -173,7 +175,7 @@ int main(int argc, char** argv) {
                              global_offset, arr, seed);
 
     // Pre-calcola indici delle facce per lo scambio halo
-    vector<FaceCache> face_cache = build_face_cache(local_L, local_L_halo, N_dim);
+    vector<FaceCache> face_cache = build_faces(local_L, local_L_halo, N_dim);
 
     // Costruisci tabella dei vicini per ottimizzare accesso
     NeighborTable neighbor_table;
@@ -268,8 +270,8 @@ int main(int argc, char** argv) {
             MPI_Reduce(&local_Im, &global_Im, 1, MPI_DOUBLE, MPI_SUM, 0, cart_comm);
             mpiTime.stop();
 
-            // Prendi le misure una volta completato il thermal bath (metà configurazioni)
-            if (iConf > (int)nConfs / 2 && sample >= sample_step) {
+            // Prendi le misure una volta completata la termalizzazione
+            if (iConf > n_therm && sample >= sample_step) {
                 // Normalizza per sito
                 double mag_per_site = global_mag / N;
                 double en_per_site = global_en / N;
