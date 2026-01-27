@@ -9,11 +9,11 @@ cd $PBS_O_WORKDIR
 # Create logs directory if it doesn't exist
 mkdir -p logs
 
-# MPI setup - clear old paths first to avoid conflicts
+# Clear any local OpenMPI paths
+unset LD_LIBRARY_PATH
 export MPI_ROOT=/storage/local/exp_soft/local_sl7/mpi/openmpi-4.0.5
 export PATH=$MPI_ROOT/bin:$PATH
 export LD_LIBRARY_PATH=$MPI_ROOT/lib
-unset OPAL_PREFIX
 
 # OpenMP configuration: 4 nodes, 8 MPI ranks, 12 threads each
 export OMP_NUM_THREADS=12

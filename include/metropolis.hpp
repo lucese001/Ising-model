@@ -23,130 +23,108 @@ extern size_t N_dim;
 extern size_t N;
 extern double Beta;
 
-// metropolis_update: esegue uno sweep Metropolis completo
-// con aggiornamento a scacchiera sui siti specificati
+// Esegue un update Metropolis sui siti specificati usando la tabella dei vicini
+// - sites: indici locali dei siti da aggiornare
+// - global_indices: indici globali corrispondenti (per RNG riproducibile)
+// - table: tabella pre-calcolata dei vicini
 
 #ifdef USE_PHILOX
 
-// Philox RNG: riproducible per update Bulk-Boundary (non dipende dalla
-// sequenza estratta).
 inline void metropolis_update(vector<int8_t>& conf_local,
                               const vector<size_t>& sites,
-                              const vector<size_t>& sites_global_indices,
-                              const vector<size_t>& local_L,
-                              const vector<size_t>& local_L_halo,
+                              const vector<size_t>& global_indices,
+                              const NeighborTable& table,
                               PhiloxRNG& gen,
                               int iConf,
-                              size_t nThreads,
-                              size_t N_local,
-                              int target_parity)
+                              uint8_t nThreads)
 {
-    vector<size_t> coord_buf(N_dim);
-    vector<size_t> coord_tmp(N_dim);
+    const uint32_t n_sites = (uint32_t)sites.size();
 
-    #pragma omp parallel firstprivate(coord_buf, coord_tmp)
+    #pragma omp parallel
     {
-        const size_t iThread = omp_get_thread_num();
-        const size_t chunkSize = (sites.size() + nThreads - 1) / nThreads;
-        const size_t beg = chunkSize * iThread;
-        const size_t end = std::min(sites.size(), beg + chunkSize);
+        const uint8_t thread_id = (uint8_t)omp_get_thread_num();
+        const uint32_t chunk_size = (n_sites + nThreads - 1) / nThreads;
+        const uint32_t begin = chunk_size * thread_id;
+        const uint32_t end = std::min(n_sites, begin + chunk_size);
 
-        for (size_t idx = beg; idx < end; ++idx) {
-            size_t iSite = sites[idx];
-            size_t global_idx = sites_global_indices[idx];
+        for (uint32_t idx = begin; idx < end; ++idx) {
+            const uint32_t site = (uint32_t)sites[idx];
+            const size_t global_idx = global_indices[idx];  // Resta size_t per RNG
 
-            // Converti iSite in coord per trovare halo index vicini
-            index_to_coord(iSite, N_dim, local_L.data(), coord_buf.data());
+            // Indice nel vettore con halo
+            const uint32_t halo_idx = table.site_to_halo[site];
 
-            for (size_t d = 0; d < N_dim; ++d) {
-                coord_tmp[d] = coord_buf[d] + 1;
-            }
-            size_t iSite_halo = coord_to_index(N_dim, local_L_halo.data(),
-                                              coord_tmp.data());
+            const int8_t old_spin = conf_local[halo_idx];
+            const int energy_before = computeEnSite(conf_local, site, table);
 
-            const int8_t oldVal = conf_local[iSite_halo];
-            const int enBefore = computeEnSite(conf_local, iSite,
-                                              local_L, local_L_halo);
-
-            // Philox é un counter-based RNG. In questo modo l'ordine in cui
-            // vengono aggiornati i siti non influenza i numeri estratti
-            // (dipendono solo dall'indice globale e dalla configurazione)
+            // Philox RNG: numeri riproducibili basati su indice globale e configurazione
             uint32_t rand0 = gen.get1(global_idx, iConf, 0, false);
             uint32_t rand1 = gen.get1(global_idx, iConf, 1, false);
 
-            // Sample 0: Proposta di spin
+            // Proposta: spin casuale +1 o -1
             int8_t proposed_spin = (rand0 & 1) ? 1 : -1;
-            conf_local[iSite_halo] = proposed_spin;
+            conf_local[halo_idx] = proposed_spin;
 
-            const int enAfter = computeEnSite(conf_local, iSite,
-                                             local_L, local_L_halo);
-            const int eDiff = enAfter - enBefore;
-            const double pAcc = std::min(1.0, exp(-Beta * (double)eDiff));
+            const int energy_after = computeEnSite(conf_local, site, table);
+            const int delta_energy = energy_after - energy_before;
+            const double accept_prob = std::min(1.0, exp(-Beta * (double)delta_energy));
 
-            // Sample 1: Probabilitá di accetazione
+            // Accetta/rifiuta in base a numero casuale uniforme
             const double rand_uniform = (double)rand1 / 4294967296.0;
-            const int acc = (rand_uniform < pAcc) ? 1 : 0;
-
-            if (!acc) conf_local[iSite_halo] = oldVal;
+            if (rand_uniform >= accept_prob) {
+                conf_local[halo_idx] = old_spin;  // Rifiuta: ripristina
+            }
         }
     }
 }
 
-#else  // Versione originale prng_engine (dipende dalla sequenza estratta)
+#else  // prng_engine
 
 inline void metropolis_update(vector<int8_t>& conf_local,
                               const vector<size_t>& sites,
-                              const vector<size_t>& sites_global_indices,
-                              const vector<size_t>& local_L,
-                              const vector<size_t>& local_L_halo,
+                              const vector<size_t>& global_indices,
+                              const NeighborTable& table,
                               prng_engine& gen,
                               int iConf,
-                              size_t nThreads,
-                              size_t N_local,
-                              int target_parity)
+                              uint8_t nThreads)
 {
-    vector<size_t> coord_buf(N_dim);
-    vector<size_t> coord_tmp(N_dim);
+    const uint32_t n_sites = (uint32_t)sites.size();
 
-    #pragma omp parallel firstprivate(coord_buf, coord_tmp)
+    #pragma omp parallel
     {
-        const size_t iThread = omp_get_thread_num();
-        const size_t chunkSize = (sites.size() + nThreads - 1) / nThreads;
-        const size_t beg = chunkSize * iThread;
-        const size_t end = std::min(sites.size(), beg + chunkSize);
+        const uint8_t thread_id = (uint8_t)omp_get_thread_num();
+        const uint32_t chunk_size = (n_sites + nThreads - 1) / nThreads;
+        const uint32_t begin = chunk_size * thread_id;
+        const uint32_t end = std::min(n_sites, begin + chunk_size);
 
-        for (size_t idx = beg; idx < end; ++idx) {
-            size_t iSite = sites[idx];
-            size_t global_idx = sites_global_indices[idx];
+        for (uint32_t idx = begin; idx < end; ++idx) {
+            const uint32_t site = (uint32_t)sites[idx];
+            const size_t global_idx = global_indices[idx];  // Resta size_t per RNG
 
-            // discard basato sull'indice globale
-            prng_engine genView = gen;
-            genView.discard(2 * 2 * (global_idx + N * iConf));
+            // Discard per rendere riproducibile basato sull'indice globale
+            prng_engine gen_local = gen;
+            gen_local.discard(2 * 2 * (global_idx + N * iConf));
 
-            // Converti iSite in coord per trovare halo index vicini
-            index_to_coord(iSite, N_dim, local_L.data(), coord_buf.data());
+            // Indice nel vettore con halo
+            const uint32_t halo_idx = table.site_to_halo[site];
 
-            for (size_t d = 0; d < N_dim; ++d) {
-                coord_tmp[d] = coord_buf[d] + 1;
+            const int8_t old_spin = conf_local[halo_idx];
+            const int energy_before = computeEnSite(conf_local, site, table);
+
+            // Proposta: spin casuale +1 o -1
+            conf_local[halo_idx] = (int8_t)(binomial_distribution<int>(1, 0.5)(gen_local) * 2 - 1);
+
+            const int energy_after = computeEnSite(conf_local, site, table);
+            const int delta_energy = energy_after - energy_before;
+            const double accept_prob = std::min(1.0, exp(-Beta * (double)delta_energy));
+
+            // Accetta/rifiuta
+            const int accept = binomial_distribution<int>(1, accept_prob)(gen_local);
+            if (!accept) {
+                conf_local[halo_idx] = old_spin;  // Rifiuta: ripristina
             }
-            size_t iSite_halo = coord_to_index(N_dim, local_L_halo.data(),
-                                              coord_tmp.data());
-
-            const int8_t oldVal = conf_local[iSite_halo];
-            const int enBefore = computeEnSite(conf_local, iSite,
-                                              local_L, local_L_halo);
-
-            conf_local[iSite_halo] = (int8_t)(binomial_distribution<int>(1, 0.5)(genView) * 2 - 1);
-
-            const int enAfter = computeEnSite(conf_local, iSite,
-                                             local_L, local_L_halo);
-            const int eDiff = enAfter - enBefore;
-            const double pAcc = std::min(1.0, exp(-Beta * (double)eDiff));
-            const int acc = binomial_distribution<int>(1, pAcc)(genView);
-
-            if (!acc) conf_local[iSite_halo] = oldVal;
         }
     }
 }
 
-#endif 
+#endif

@@ -6,7 +6,7 @@
 #include <mpi.h>
 #include "utility.hpp"
 
-using std::vector;
+using namespace std;
 
 // Legge i parametri di simulazione dal file dimensioni.txt
 // Restituisce true se la lettura è andata a buon fine, false altrimenti

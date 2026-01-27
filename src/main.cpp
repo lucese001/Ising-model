@@ -174,11 +174,20 @@ int main(int argc, char** argv) {
     halo_buffers.resize(N_dim);
     vector<MPI_Request> requests;
 
-    // Pre-calcola indici delle facce
-    vector<FaceInfo> faces = build_faces(local_L, N_dim);
-    vector<FaceCache> face_cache = build_face_cache(faces, local_L, local_L_halo,
-                                                     global_offset, arr, N_dim);
+    // Pre-calcola indici delle facce per lo scambio halo
+    vector<FaceCache> face_cache = build_face_cache(local_L, local_L_halo, N_dim);
 
+    // Costruisci tabella dei vicini per ottimizzare accesso
+    NeighborTable neighbor_table;
+    if (!build_neighbor_table(neighbor_table, N_local, N_dim, local_L, local_L_halo)) {
+        MPI_Abort(MPI_COMM_WORLD, 1);
+        return 1;
+    }
+    if (world_rank == 0) {
+        size_t table_memory = neighbor_table.site_to_halo.size() * sizeof(uint32_t)
+                            + neighbor_table.neighbors.size() * sizeof(uint32_t);
+        printf("Neighbor table costruita: %.2f MB per rank\n", table_memory / (1024.0 * 1024.0));
+    }
 
     setupTime.stop();
 
@@ -199,7 +208,8 @@ int main(int argc, char** argv) {
 
         if (world_rank == 0) {
             if (sweep_mode == 1) {
-                printf(" Temperatura %d/%d: Beta = %lg \n", iTemp + 1, n_temps, Beta);
+                printf(" Temperatura %d/%d: Beta = %lg \n", 
+                    iTemp + 1, n_temps, Beta);
             }
         }
 
@@ -239,11 +249,10 @@ int main(int argc, char** argv) {
             write_full_halo_data(conf_local, halo_buffers, N_dim, face_cache,requests);
             mpiTime.stop();
 
-            // Misure
+            // Misure (usando le versioni ottimizzate)
             computeTime.start();
-            double local_mag = computeMagnetization_local(conf_local, N_local,
-                                                          local_L, local_L_halo);
-            double local_en = computeEn(conf_local, N_local, local_L, local_L_halo);
+            double local_mag = computeMagnetization(conf_local, N_local, neighbor_table);
+            double local_en = computeEnergy(conf_local, N_local, neighbor_table);
             computeTime.stop();
 
             mpiTime.start();
@@ -275,11 +284,10 @@ int main(int argc, char** argv) {
                 ioTime.stop();
             }
 
-            // Aggiorna tutti i siti rossi
+            // Aggiorna tutti i siti rossi (versione ottimizzata)
             computeTime.start();
             metropolis_update(conf_local, red_sites, red_indices,
-                              local_L, local_L_halo, gen,
-                              iConf, nThreads, N_local, 0);
+                                   neighbor_table, gen, iConf, nThreads);
             computeTime.stop();
 
             // Halo exchange per update nero successivo
@@ -289,11 +297,10 @@ int main(int argc, char** argv) {
             write_full_halo_data(conf_local, halo_buffers, N_dim, face_cache,requests);
             mpiTime.stop();
 
-            // Aggiorna tutti i siti neri
+            // Aggiorna tutti i siti neri (versione ottimizzata)
             computeTime.start();
             metropolis_update(conf_local, black_sites, black_indices,
-                              local_L, local_L_halo, gen,
-                              iConf, nThreads, N_local, 1);
+                                   neighbor_table, gen, iConf, nThreads);
             computeTime.stop();
         }
 
