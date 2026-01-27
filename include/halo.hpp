@@ -8,18 +8,6 @@
 
 using namespace std;
 
-// Buffer per lo scambio halo MPI
-struct HaloBuffers {
-    vector<vector<int8_t>> send_minus, send_plus;
-    vector<vector<int8_t>> recv_minus, recv_plus;
-
-    void resize(uint8_t N_dim) {
-        send_minus.resize(N_dim);
-        send_plus.resize(N_dim);
-        recv_minus.resize(N_dim);
-        recv_plus.resize(N_dim);
-    }
-};
 
 // Cache pre-calcolata degli indici per lo scambio halo
 // Per ogni dimensione, memorizza gli indici dei siti al confine e nell'halo
@@ -126,78 +114,51 @@ inline void halo_index(MPI_Comm cart_comm, uint8_t N_dim, vector<vector<int>>& n
 }
 
 
-// Inizia lo scambio halo asincrono su tutte le dimensioni
-inline void start_full_halo_exchange(
+// Esegue lo scambio halo completo su tutte le dimensioni usando MPI_Sendrecv
+inline void halo_exchange(
     vector<int8_t>& conf_local,
-    const vector<size_t>& local_L,
-    const vector<size_t>& local_L_halo,
     const vector<vector<int>>& neighbors,
-    MPI_Comm cart_comm,
-    uint8_t N_dim,
-    HaloBuffers& buffers,
-    vector<MPI_Request>& requests,
+    MPI_Comm cart_comm, uint8_t N_dim,
     const vector<FaceCache>& cache)
 {
-    requests.clear();
-    buffers.resize(N_dim);
+    int my_rank;
+    MPI_Comm_rank(cart_comm, &my_rank);
 
     for (uint8_t d = 0; d < N_dim; ++d) {
         const uint32_t face_size = cache[d].face_size;
 
-        // Resize dei buffer per questa dimensione
-        buffers.send_minus[d].resize(face_size);
-        buffers.send_plus[d].resize(face_size);
-        buffers.recv_minus[d].resize(face_size);
-        buffers.recv_plus[d].resize(face_size);
+        // Buffer temporanei per questa dimensione
+        vector<int8_t> send_minus(face_size), send_plus(face_size);
+        vector<int8_t> recv_minus(face_size), recv_plus(face_size);
 
         // Copia dati nei buffer di invio
         for (uint32_t i = 0; i < face_size; ++i) {
-            buffers.send_minus[d][i] = conf_local[cache[d].idx_minus[i]];
-            buffers.send_plus[d][i] = conf_local[cache[d].idx_plus[i]];
+            send_minus[i] = conf_local[cache[d].idx_minus[i]];
+            send_plus[i] = conf_local[cache[d].idx_plus[i]];
         }
 
-        int tag_minus = 100 + d;
-        int tag_plus  = 200 + d;
-        MPI_Request req;
+        // Se sono il mio stesso vicino (1 rank in questa dimensione), copia locale
+        if (neighbors[d][0] == my_rank) {
+            for (uint32_t i = 0; i < face_size; ++i) {
+                conf_local[cache[d].idx_halo_minus[i]] = send_plus[i];
+                conf_local[cache[d].idx_halo_plus[i]] = send_minus[i];
+            }
+        } else {
+            // Shift +1: invio plus boundary al plus neighbor, ricevo dal minus neighbor
+            MPI_Sendrecv(send_plus.data(), face_size, MPI_INT8_T, neighbors[d][1], d,
+                         recv_minus.data(), face_size, MPI_INT8_T, neighbors[d][0], d,
+                         cart_comm, MPI_STATUS_IGNORE);
 
-        // Ricevi dal vicino negativo
-        MPI_Irecv(buffers.recv_minus[d].data(), face_size, MPI_INT8_T,
-                  neighbors[d][0], tag_plus, cart_comm, &req);
-        requests.push_back(req);
+            // Shift -1: invio minus boundary al minus neighbor, ricevo dal plus neighbor
+            MPI_Sendrecv(send_minus.data(), face_size, MPI_INT8_T, neighbors[d][0], d + N_dim,
+                         recv_plus.data(), face_size, MPI_INT8_T, neighbors[d][1], d + N_dim,
+                         cart_comm, MPI_STATUS_IGNORE);
 
-        // Ricevi dal vicino positivo
-        MPI_Irecv(buffers.recv_plus[d].data(), face_size, MPI_INT8_T,
-                  neighbors[d][1], tag_minus, cart_comm, &req);
-        requests.push_back(req);
-
-        // Invia al vicino negativo
-        MPI_Isend(buffers.send_minus[d].data(), face_size, MPI_INT8_T,
-                  neighbors[d][0], tag_minus, cart_comm, &req);
-        requests.push_back(req);
-
-        // Invia al vicino positivo
-        MPI_Isend(buffers.send_plus[d].data(), face_size, MPI_INT8_T,
-                  neighbors[d][1], tag_plus, cart_comm, &req);
-        requests.push_back(req);
-    }
-}
-
-// Completa lo scambio halo e scrive i dati ricevuti nelle ghost cells
-inline void write_full_halo_data(
-    vector<int8_t>& conf_local,
-    const HaloBuffers& buffers,
-    uint8_t N_dim,
-    const vector<FaceCache>& cache,
-    vector<MPI_Request>& reqs)
-{
-    MPI_Waitall((int)reqs.size(), reqs.data(), MPI_STATUSES_IGNORE);
-    reqs.clear();
-
-    for (uint8_t d = 0; d < N_dim; ++d) {
-        const uint32_t face_size = cache[d].face_size;
-        for (uint32_t i = 0; i < face_size; ++i) {
-            conf_local[cache[d].idx_halo_minus[i]] = buffers.recv_minus[d][i];
-            conf_local[cache[d].idx_halo_plus[i]] = buffers.recv_plus[d][i];
+            // Scrivi dati ricevuti nelle ghost cells
+            for (uint32_t i = 0; i < face_size; ++i) {
+                conf_local[cache[d].idx_halo_minus[i]] = recv_minus[i];
+                conf_local[cache[d].idx_halo_plus[i]] = recv_plus[i];
+            }
         }
     }
 }

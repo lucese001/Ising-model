@@ -169,13 +169,8 @@ int main(int argc, char** argv) {
     initialize_configuration(conf_local, N_local, N_dim, local_L, local_L_halo,
                              global_offset, arr, seed);
 
-    // Buffer e cache per halo exchange (usando funzioni da halo.hpp)
-    HaloBuffers halo_buffers;
-    halo_buffers.resize(N_dim);
-    vector<MPI_Request> requests;
-
     // Pre-calcola indici delle facce per lo scambio halo
-    vector<FaceCache> face_cache = build_face_cache(local_L, local_L_halo, N_dim);
+    vector<FaceCache> face_cache = build_faces(local_L, local_L_halo, N_dim);
 
     // Costruisci tabella dei vicini per ottimizzare accesso
     NeighborTable neighbor_table;
@@ -243,10 +238,7 @@ int main(int argc, char** argv) {
 
             // Halo exchange completo
             mpiTime.start();
-            start_full_halo_exchange(conf_local, local_L, local_L_halo,
-                                    neighbors, cart_comm, N_dim,
-                                    halo_buffers, requests, face_cache);
-            write_full_halo_data(conf_local, halo_buffers, N_dim, face_cache,requests);
+            halo_exchange(conf_local, neighbors, cart_comm, N_dim, face_cache);
             mpiTime.stop();
 
             // Misure (usando le versioni ottimizzate)
@@ -292,9 +284,7 @@ int main(int argc, char** argv) {
 
             // Halo exchange per update nero successivo
             mpiTime.start();
-            start_full_halo_exchange(conf_local, local_L, local_L_halo, neighbors,
-                                     cart_comm, N_dim, halo_buffers, requests, face_cache);
-            write_full_halo_data(conf_local, halo_buffers, N_dim, face_cache,requests);
+            halo_exchange(conf_local, neighbors, cart_comm, N_dim, face_cache);
             mpiTime.stop();
 
             // Aggiorna tutti i siti neri (versione ottimizzata)
