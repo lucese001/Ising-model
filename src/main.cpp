@@ -21,6 +21,9 @@
 #include <omp.h>
 #include <algorithm>
 #include <cmath>
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -170,7 +173,7 @@ int main(int argc, char** argv) {
                              global_offset, arr, seed);
 
     // Pre-calcola indici delle facce per lo scambio halo
-    vector<FaceCache> face_cache = build_faces(local_L, local_L_halo, N_dim);
+    vector<FaceCache> face_cache = build_face_cache(local_L, local_L_halo, N_dim);
 
     // Costruisci tabella dei vicini per ottimizzare accesso
     NeighborTable neighbor_table;
@@ -214,6 +217,8 @@ int main(int argc, char** argv) {
         double cumul_mag_sq = 0;
         double cumul_en = 0;
         double cumul_en_sq = 0;
+        double cumul_mag_quart = 0;
+        double cumul_Gk = 0;  // Per lunghezza di correlazione
         int sample = 0;
         int n_meas = 0;
 
@@ -253,6 +258,16 @@ int main(int argc, char** argv) {
             MPI_Reduce(&local_en, &global_en, 1, MPI_DOUBLE, MPI_SUM, 0, cart_comm);
             mpiTime.stop();
 
+            // Calcola modo di Fourier per lunghezza di correlazione
+            double local_Re, local_Im;
+            computeFourierMode(conf_local, N_local, N_dim, local_L, local_L_halo,
+                               global_offset, arr[0], local_Re, local_Im);
+            double global_Re, global_Im;
+            mpiTime.start();
+            MPI_Reduce(&local_Re, &global_Re, 1, MPI_DOUBLE, MPI_SUM, 0, cart_comm);
+            MPI_Reduce(&local_Im, &global_Im, 1, MPI_DOUBLE, MPI_SUM, 0, cart_comm);
+            mpiTime.stop();
+
             // Prendi le misure una volta completato il thermal bath (metà configurazioni)
             if (iConf > (int)nConfs / 2 && sample >= sample_step) {
                 // Normalizza per sito
@@ -261,8 +276,14 @@ int main(int argc, char** argv) {
                 cumul_mag += mag_per_site;
                 cumul_mag_abs += abs(mag_per_site);
                 cumul_mag_sq += mag_per_site * mag_per_site;
+                cumul_mag_quart += pow(mag_per_site, 4);
                 cumul_en += en_per_site;
                 cumul_en_sq += en_per_site * en_per_site;
+                // G(k_min) = |m(k)|² per lunghezza di correlazione
+                if (world_rank == 0) {
+                    double Gk = global_Re * global_Re + global_Im * global_Im;
+                    cumul_Gk += Gk;
+                }
                 sample = 0;
                 n_meas++;
             } else {
@@ -299,19 +320,28 @@ int main(int argc, char** argv) {
         double avg_mag_abs = cumul_mag_abs / n_meas;
         double avg_en = cumul_en / n_meas;
         double avg_mag_sq = cumul_mag_sq / n_meas;
+        double avg_mag_quart = cumul_mag_quart / n_meas;
         double avg_en_sq = cumul_en_sq / n_meas;
         double chi = N * Beta * (avg_mag_sq - avg_mag * avg_mag);
         double Cv = N * Beta * Beta * (avg_en_sq - avg_en * avg_en);
+        double binder_cumulant = 1 - avg_mag_quart / (3 * avg_mag_sq * avg_mag_sq);
+        double avg_Gk = cumul_Gk / n_meas;
+        double G0 = N * N * avg_mag_sq;  // G(0) = <M²>
+        double L_first = (double)arr[0];
+        double xi = 0;
+        if (avg_Gk > 0 && G0 / avg_Gk > 1) {
+            xi = (1.0 / (2.0 * sin(M_PI / L_first))) * sqrt(G0 / avg_Gk - 1.0);
+        }
 
         // Scrivi risultati
         if (world_rank == 0) {
             if (sweep_mode == 1) {
                 // In sweep mode, stampa ogni osservabile
                 ioTime.start();
-                write_sweep_measurement(measFile, Beta, avg_mag, avg_mag_abs, avg_en, chi, Cv);
+                write_sweep_measurement(measFile, Beta, avg_mag, avg_mag_abs, avg_en, chi, Cv, xi);
                 ioTime.stop();
-                printf("  n_meas=%d, <m>=%.6f, <|m|>=%.6f, <e>=%.6f, chi=%.6f, Cv=%.6f\n",
-                       n_meas, avg_mag, avg_mag_abs, avg_en, chi, Cv);
+                printf("  n_meas=%d, <m>=%.6f, <|m|>=%.6f, <e>=%.6f, chi=%.6f, Cv=%.6f, xi=%.6f\n",
+                       n_meas, avg_mag, avg_mag_abs, avg_en, chi, Cv, xi);
             } else {
                 // Caso per T fissa, stampa le osservabili
                 printf("\nRisultati finali (n_meas=%d):\n", n_meas);
@@ -320,6 +350,7 @@ int main(int argc, char** argv) {
                 printf("  <e>   = %.6f\n", avg_en);
                 printf("  chi   = %.6f\n", chi);
                 printf("  Cv    = %.6f\n", Cv);
+                printf("  xi    = %.6f\n", xi);
             }
         }
     }

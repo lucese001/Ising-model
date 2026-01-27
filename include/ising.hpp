@@ -2,9 +2,14 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <cmath>
 #include <random>
 #include "prng_engine.hpp"
 #include "utility.hpp"
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 using namespace std;
 
@@ -12,7 +17,7 @@ using namespace std;
 extern size_t N_dim;
 
 // Tabella pre-calcolata dei vicini per ogni sito locale
-// Usa uint32_t per gli indici (supporta fino a ~4 miliardi di siti per rank)
+// Supporta circa 4 miliardi di siti per rank
 struct NeighborTable {
     vector<uint32_t> site_to_halo;  // [N_local] -> indice halo del sito
     vector<uint32_t> neighbors;     // [N_local * 2*N_dim] -> indici halo dei vicini
@@ -209,14 +214,14 @@ inline void initialize_configuration(vector<int8_t>& conf_local,
                                      uint64_t base_seed) {
     // Inizializza tutto a 0
     std::fill(conf_local.begin(), conf_local.end(), 0);
-    
+
     #pragma omp parallel
     {
         // Ogni thread ha i suoi buffer per le coordinate
         vector<size_t> coord_local(N_dim);
         vector<size_t> coord_halo(N_dim);
         vector<size_t> coord_global(N_dim);  // buffer per compute_global_index
-        
+
         #pragma omp for
         for (size_t i = 0; i < N_local; ++i) {
 
@@ -225,16 +230,53 @@ inline void initialize_configuration(vector<int8_t>& conf_local,
             uint64_t site_seed = base_seed + global_index;
             prng_engine site_gen(site_seed);
             int8_t spin = (site_gen() & 1) ? 1 : -1;
-            
+
             // Converti l'indice locale (senza halo) in indice con halo
             index_to_coord(i, N_dim, local_L.data(), coord_local.data());
             for (size_t d = 0; d < N_dim; ++d) {
                 coord_halo[d] = coord_local[d] + 1;  // +1 per saltare l'halo
             }
             size_t idx_halo = coord_to_index(N_dim, local_L_halo.data(), coord_halo.data());
-            
+
             // Memorizza lo spin
             conf_local[idx_halo] = spin;
         }
     }
+}
+
+// Calcola il modo di Fourier a k_min = 2π/L (lungo la prima dimensione)
+// Usato per calcolare la lunghezza di correlazione ξ
+inline void computeFourierMode(const vector<int8_t>& conf,
+                               uint32_t N_local,
+                               uint8_t N_dim,
+                               const vector<size_t>& local_L,
+                               const vector<size_t>& local_L_halo,
+                               const vector<size_t>& global_offset,
+                               size_t L,
+                               double& Re, double& Im)
+{
+    const double k = 2.0 * M_PI / L;
+    double local_Re = 0, local_Im = 0;
+
+    #pragma omp parallel reduction(+:local_Re, local_Im)
+    {
+        vector<size_t> coord(N_dim), coord_halo(N_dim);
+
+        #pragma omp for
+        for (uint32_t iSite = 0; iSite < N_local; ++iSite) {
+            index_to_coord(iSite, N_dim, local_L.data(), coord.data());
+            for (uint8_t d = 0; d < N_dim; ++d) {
+                coord_halo[d] = coord[d] + 1;
+            }
+            size_t halo_idx = coord_to_index(N_dim, local_L_halo.data(), coord_halo.data());
+
+            size_t global_x = coord[0] + global_offset[0];
+            double angle = k * global_x;
+            local_Re += conf[halo_idx] * cos(angle);
+            local_Im += conf[halo_idx] * sin(angle);
+        }
+    }
+
+    Re = local_Re;
+    Im = local_Im;
 }

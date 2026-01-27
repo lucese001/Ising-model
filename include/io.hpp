@@ -125,16 +125,16 @@ inline bool read_input_file(const char* filename,
 
 // Scrive intestazione file output per sweep mode
 inline void write_sweep_header(FILE* measFile) {
-    fprintf(measFile, "# Beta  <m>  <|m|>  <e>  chi  Cv\n");
+    fprintf(measFile, "# Beta  <m>  <|m|>  <e>  chi  Cv  xi\n");
     fflush(measFile);
 }
 
 // Scrive una riga di risultati per sweep mode (valori per sito)
 inline void write_sweep_measurement(FILE* measFile, double beta,
                                      double avg_mag, double avg_mag_abs,
-                                     double avg_en, double chi, double Cv) {
-    fprintf(measFile, "%lg %lg %lg %lg %lg %lg\n",
-            beta, avg_mag, avg_mag_abs, avg_en, chi, Cv);
+                                     double avg_en, double chi, double Cv, double xi) {
+    fprintf(measFile, "%lg %lg %lg %lg %lg %lg %lg\n",
+            beta, avg_mag, avg_mag_abs, avg_en, chi, Cv, xi);
     fflush(measFile);
 }
 

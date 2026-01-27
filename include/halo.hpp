@@ -21,7 +21,7 @@ struct FaceCache {
 
 // Costruisce la cache degli indici per lo scambio halo
 // Per ogni dimensione d, calcola gli indici dei siti sulla faccia perpendicolare a d
-inline vector<FaceCache> build_face_cache(const vector<size_t>& local_L,
+inline vector<FaceCache> build_faces(const vector<size_t>& local_L,
                                           const vector<size_t>& local_L_halo,
                                           uint8_t N_dim)
 {
@@ -57,7 +57,7 @@ inline vector<FaceCache> build_face_cache(const vector<size_t>& local_L,
         for (uint32_t i = 0; i < face_size; ++i) {
             index_to_coord(i, face_dims.size(), face_dims.data(), coord_face.data());
 
-            // Converti coordinate faccia -> coordinate complete (con offset +1 per halo)
+            // Converti coordinate della faccia in coordinate complete (con offset +1 per halo)
             for (uint8_t j = 0; j < face_to_full.size(); ++j) {
                 coord_full[face_to_full[j]] = coord_face[j] + 1;
             }
@@ -154,7 +154,7 @@ inline void halo_exchange(
                          recv_plus.data(), face_size, MPI_INT8_T, neighbors[d][1], d + N_dim,
                          cart_comm, MPI_STATUS_IGNORE);
 
-            // Scrivi dati ricevuti nelle ghost cells
+            // Scrivi dati ricevuti nelle celle halo
             for (uint32_t i = 0; i < face_size; ++i) {
                 conf_local[cache[d].idx_halo_minus[i]] = recv_minus[i];
                 conf_local[cache[d].idx_halo_plus[i]] = recv_plus[i];
