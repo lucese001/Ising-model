@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -l
 #PBS -N ising_L16
 #PBS -l nodes=1:ppn=4
 #PBS -l walltime=04:00:00

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -l
 #PBS -N ising_L32
 #PBS -l nodes=1:ppn=6
 #PBS -l walltime=12:00:00
