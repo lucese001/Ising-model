@@ -7,6 +7,9 @@
 
 cd $PBS_O_WORKDIR
 
+# Carica moduli necessari
+module load mpi/openmpi-x86_64
+
 # Crea directory output e logs se non esistono
 mkdir -p output logs
 
