@@ -1,4 +1,4 @@
-#!/bin/bash -l
+#!/bin/bash
 #PBS -N ising_L16
 #PBS -l nodes=1:ppn=4
 #PBS -l walltime=04:00:00
@@ -7,8 +7,11 @@
 
 cd $PBS_O_WORKDIR
 
-# Carica moduli necessari
-module load mpi/openmpi-x86_64
+# Setup OpenMPI
+unset LD_LIBRARY_PATH
+export MPI_ROOT=/storage/local/exp_soft/local_sl7/mpi/openmpi-4.0.5
+export PATH=$MPI_ROOT/bin:$PATH
+export LD_LIBRARY_PATH=$MPI_ROOT/lib
 
 # Crea directory output e logs se non esistono
 mkdir -p output logs
